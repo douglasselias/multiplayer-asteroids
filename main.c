@@ -55,9 +55,124 @@ typedef struct {
 
 s32 bullet_radius = 10;
 SDL_Texture* bullet_texture;
+Vector2 bullet_texture_center;
 #define MAX_BULLETS 1000
 Bullet bullets[MAX_BULLETS] = {0};
 s32 bullet_index = 0;
+
+typedef struct {
+  Vector2 position;
+  Vector2 velocity;
+} Asteroid;
+u32 asteroid_radius = 45;
+SDL_Texture* asteroid_texture;
+Vector2 asteroid_texture_center;
+#define MAX_ASTEROIDS 20
+Asteroid asteroids[MAX_ASTEROIDS] = {0};
+
+s32 GetRandomValue(s32 min, s32 max) {
+  s32 value = 0;
+
+  if (min > max) {
+    s32 tmp = max;
+    max = min;
+    min = tmp;
+  }
+
+  value = (SDL_rand(100)%(abs(max - min) + 1) + min);
+  return value;
+}
+
+void spawn_meteor(Asteroid* asteroid) {
+  /// @note: padding to keep the location 'inside' the screen boundaries
+  f32 spawn_padding = 30;
+  /// @note: offset to keep the location 'outside' the screen boundaries
+  f32 spawn_offset = 30;
+  Vector2 meteor_spawn_locations[12] = {
+    /// @note: top
+    {spawn_padding, -spawn_offset},
+    {HALF_WINDOW_WIDTH, -spawn_offset},
+    {WINDOW_WIDTH - spawn_padding, -spawn_offset},
+    /// @note: right
+    {WINDOW_WIDTH + spawn_offset, spawn_padding},
+    {WINDOW_WIDTH + spawn_offset, HALF_WINDOW_HEIGHT},
+    {WINDOW_WIDTH + spawn_offset, WINDOW_HEIGHT - spawn_padding},
+    /// @note: bottom
+    {spawn_padding, WINDOW_HEIGHT + spawn_offset},
+    {HALF_WINDOW_WIDTH, WINDOW_HEIGHT + spawn_offset},
+    {WINDOW_WIDTH - spawn_padding, WINDOW_HEIGHT + spawn_offset},
+    /// @note: left
+    {-spawn_offset, spawn_padding},
+    {-spawn_offset, HALF_WINDOW_HEIGHT},
+    {-spawn_offset, WINDOW_HEIGHT - spawn_padding},
+  };
+
+  u32 location_index = GetRandomValue(0, 11);
+  asteroid->position = meteor_spawn_locations[location_index];
+
+  f32 angle = 0;
+  switch(location_index) {
+    /// @note: this logic follows the spawn locations order!
+    /// hex numbers just to keep aligned :)
+    /// top
+    case 0x0: angle = GetRandomValue(270, 270 + 60); break;
+    case 0x1: angle = GetRandomValue(190, 350);      break;
+    case 0x2: angle = GetRandomValue(270 - 60, 270); break;
+    /// right:
+    case 0x3: angle = GetRandomValue(180, 180 + 60); break;
+    case 0x4: angle = GetRandomValue(100, 170);      break;
+    case 0x5: angle = GetRandomValue(180 - 60, 180); break;
+    /// bottom:
+    case 0x6: angle = GetRandomValue(90 - 60, 90);  break;
+    case 0x7: angle = GetRandomValue(10, 170);      break;
+    case 0x8: angle = GetRandomValue(90, 90  + 60); break;
+    /// left:
+    case 0x9: angle = GetRandomValue(360 - 60, 360);  break;
+    case 0xa: angle = GetRandomValue(280, 270 + 160); break;
+    case 0xb: angle = GetRandomValue(0, 60);          break;
+  }
+  angle *= DEG2RAD;
+  f32 speed = GetRandomValue(50, 250);
+  asteroid->velocity = (Vector2){
+    (f32)cos(angle)  * speed,
+    (f32)-sin(angle) * speed,
+  };
+}
+
+bool is_out_of_bounds(Vector2 position) {
+  float despawn_offset = 500;
+  float top_despawn_zone    = -despawn_offset;
+  float left_despawn_zone   = -despawn_offset;
+  float right_despawn_zone  =  despawn_offset + WINDOW_WIDTH;
+  float bottom_despawn_zone =  despawn_offset + WINDOW_HEIGHT;
+
+  if(position.y < top_despawn_zone
+  || position.x > right_despawn_zone
+  || position.y > bottom_despawn_zone
+  || position.x < left_despawn_zone) {
+    return true;
+  }
+
+  return false;
+}
+
+void reset_bullet(u32 i) {
+  bullets[i].position.x = -30;
+  bullets[i].position.y = -30;
+  bullets[i].velocity.x = 0;
+  bullets[i].velocity.y = 0;
+}
+
+bool circles_are_colliding(Vector2 center1, f32 radius1, Vector2 center2, f32 radius2) {
+  f32 dx = center2.x - center1.x;
+  f32 dy = center2.y - center1.y;
+
+  f32 distanceSquared = dx*dx + dy*dy;
+  f32 radiusSum = radius1 + radius2;
+
+  bool collision = (distanceSquared <= (radiusSum*radiusSum));
+  return collision;
+}
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   // SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, "120");
@@ -74,6 +189,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     SDL_Log("Couldn't create window/renderer: %s", SDL_GetError());
     return SDL_APP_FAILURE;
   }
+
+  SDL_srand(0);
 
   for(u32 i = 0; i < MAX_SHIPS; i++) {
     char* filename = NULL;
@@ -94,11 +211,19 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   }
 
   bullet_texture = IMG_LoadTexture(renderer, "../assets/bullet.png");
+  bullet_texture_center.x = bullet_texture->w  / 2.0f;
+  bullet_texture_center.y = bullet_texture->h  / 2.0f;
   for(u32 i = 0; i < MAX_BULLETS; i++) {
     bullets[i].position.x = -30;
     bullets[i].position.y = -30;
-    // bullets[i].position.x = HALF_WINDOW_WIDTH  - (bullet_texture->w / 2);
-    // bullets[i].position.y = HALF_WINDOW_HEIGHT - (bullet_texture->h / 2);
+  }
+
+  asteroid_texture = IMG_LoadTexture(renderer, "../assets/meteor0.png");
+  asteroid_texture_center.x = asteroid_texture->w  / 2.0f;
+  asteroid_texture_center.y = asteroid_texture->h  / 2.0f;
+
+  for(u32 i = 0; i < MAX_ASTEROIDS; i++) {
+    spawn_meteor(&asteroids[i]);
   }
 
   return SDL_APP_CONTINUE;
@@ -195,6 +320,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   }
 
   if(firing) {
+    firing = false;
     f32 rotation = ships[0].rotation;
     Vector2 position = ships[0].position;
 
@@ -215,20 +341,43 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     bullets[i].position.x += bullets[i].velocity.x * delta_time;
     bullets[i].position.y += bullets[i].velocity.y * delta_time;
 
-    // if(is_out_of_bounds(bullets[i].position)) {
-      // reset_bullet(i);
-    // }
+    if(is_out_of_bounds(bullets[i].position)) {
+      reset_bullet(i);
+    }
+  }
+
+  for(u32 i = 0; i < MAX_ASTEROIDS; i++) {
+    asteroids[i].position.x += asteroids[i].velocity.x * delta_time;
+    asteroids[i].position.y += asteroids[i].velocity.y * delta_time;
+
+    if(is_out_of_bounds(asteroids[i].position)) {
+      spawn_meteor(&asteroids[i]);
+    }
+
+    for(u32 j = 0; j < MAX_BULLETS; j++) {
+      Vector2 asteroid_center = {
+        asteroids[i].position.x + asteroid_texture_center.x,
+        asteroids[i].position.y + asteroid_texture_center.y
+      };
+      Vector2 bullet_center = {
+        bullets[j].position.x + bullet_texture_center.x,
+        bullets[j].position.y + bullet_texture_center.y
+      };
+      if(circles_are_colliding(bullet_center, bullet_radius, asteroid_center, asteroid_radius)) {
+        spawn_meteor(&asteroids[i]);
+        reset_bullet(j);
+      }
+    }
   }
 
   /// Renderer /////////////////////////////////////////////////
   SDL_SetRenderDrawColor(renderer, 30, 30, 30, SDL_ALPHA_OPAQUE);
   SDL_RenderClear(renderer);
 
-  float x, y;
-  SDL_GetMouseState(&x, &y);
-  Vector2 screen_mouse  = {x, y};
-
-  draw_circle(screen_mouse, 30, (SDL_Color){20, 100, 10});
+  // float x, y;
+  // SDL_GetMouseState(&x, &y);
+  // Vector2 screen_mouse  = {x, y};
+  // draw_circle(screen_mouse, 30, (SDL_Color){20, 100, 10});
 
   for(u8 i = 0; i < MAX_SHIPS; i++) {
     SDL_Texture *texture = ship_textures[i];
@@ -253,19 +402,28 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     dst_rect.y = bullets[i].position.y;
     dst_rect.w = texture_width;
     dst_rect.h = texture_height;
-    Vector2 center;
-    center.x = texture_width  / 2.0f;
-    center.y = texture_height / 2.0f;
-    SDL_RenderTextureRotated(renderer, bullet_texture, NULL, &dst_rect, bullets[i].rotation, &center, SDL_FLIP_NONE);
+    SDL_RenderTextureRotated(renderer, bullet_texture, NULL, &dst_rect, bullets[i].rotation, &bullet_texture_center, SDL_FLIP_NONE);
+  }
+
+  for(u32 i = 0; i < MAX_ASTEROIDS; i++) {
+    f32 texture_width  = asteroid_texture->w;
+    f32 texture_height = asteroid_texture->h;
+    SDL_FRect dst_rect;
+    dst_rect.x = asteroids[i].position.x;
+    dst_rect.y = asteroids[i].position.y;
+    dst_rect.w = texture_width;
+    dst_rect.h = texture_height;
+
+    SDL_RenderTextureRotated(renderer, asteroid_texture, NULL, &dst_rect, 0, &asteroid_texture_center, SDL_FLIP_NONE);
   }
 
   
-  SDL_SetRenderScale(renderer, 4.0f, 4.0f);
-  SDL_SetRenderDrawColor(renderer, 30, 230, 30, SDL_ALPHA_OPAQUE);
-  f32 fps = 1.0f / delta_time; 
+  // SDL_SetRenderScale(renderer, 4.0f, 4.0f);
+  // SDL_SetRenderDrawColor(renderer, 30, 230, 30, SDL_ALPHA_OPAQUE);
+  // f32 fps = 1.0f / delta_time; 
   // SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", fps);
   // SDL_RenderDebugTextFormat(renderer, 10, 10, "IMG Version: %d", SDL_IMAGE_MAJOR_VERSION);
-  SDL_SetRenderScale(renderer, 1.0f, 1.0f);
+  // SDL_SetRenderScale(renderer, 1.0f, 1.0f);
 
   SDL_SetRenderDrawColor(renderer, 200, 20, 20, SDL_ALPHA_OPAQUE);
   SDL_RenderLine(renderer, 0, HALF_WINDOW_HEIGHT, WINDOW_WIDTH, HALF_WINDOW_HEIGHT);
