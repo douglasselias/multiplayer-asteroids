@@ -47,6 +47,18 @@ typedef struct {
 
 Ship ships[MAX_SHIPS] = {0};
 
+typedef struct {
+  Vector2 position;
+  Vector2 velocity;
+  f32 rotation;
+} Bullet;
+
+s32 bullet_radius = 10;
+SDL_Texture* bullet_texture;
+#define MAX_BULLETS 1000
+Bullet bullets[MAX_BULLETS] = {0};
+s32 bullet_index = 0;
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   // SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, "120");
   SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
@@ -81,6 +93,14 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     ships[i].position.y = y;
   }
 
+  bullet_texture = IMG_LoadTexture(renderer, "../assets/bullet.png");
+  for(u32 i = 0; i < MAX_BULLETS; i++) {
+    bullets[i].position.x = -30;
+    bullets[i].position.y = -30;
+    // bullets[i].position.x = HALF_WINDOW_WIDTH  - (bullet_texture->w / 2);
+    // bullets[i].position.y = HALF_WINDOW_HEIGHT - (bullet_texture->h / 2);
+  }
+
   return SDL_APP_CONTINUE;
 }
 
@@ -92,6 +112,7 @@ typedef enum {
 ActionRotate current_rotation_direction = ACT_NO_ROTATION;
 
 bool moving_forward = false;
+bool firing = false;
 
 /* This function runs when a new event (mouse input, keypresses, etc) occurs. */
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
@@ -116,6 +137,10 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
     if(key_code == SDL_SCANCODE_W) {
       moving_forward = true;
     }
+
+    if(key_code == SDL_SCANCODE_J) {
+      firing = true;
+    }
   }
 
   if(event->type == SDL_EVENT_KEY_UP) {
@@ -129,6 +154,10 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
 
     if(key_code == SDL_SCANCODE_W) {
       moving_forward = false;
+    }
+
+    if(key_code == SDL_SCANCODE_J) {
+      firing = false;
     }
   }
 
@@ -165,10 +194,31 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     ships[0].velocity.y += direction.y * ship_acceleration.y * delta_time;
   }
 
+  if(firing) {
+    f32 rotation = ships[0].rotation;
+    Vector2 position = ships[0].position;
+
+    f32 radians = rotation * DEG2RAD;
+    Vector2 direction = {(f32)sin(radians), (f32)-cos(radians)};
+    bullets[bullet_index].rotation = rotation;
+    bullets[bullet_index].position = position;
+    bullets[bullet_index].velocity = (Vector2){direction.x * 100 * 5, direction.y * 100 * 5};
+    bullet_index = bullet_index < MAX_BULLETS - 1 ? bullet_index + 1 : 0;
+  }
+
   ships[0].position.x += ships[0].velocity.x * delta_time;
   ships[0].position.y += ships[0].velocity.y * delta_time;
   ships[0].position.x = Wrap(ships[0].position.x, 0, WINDOW_WIDTH);
   ships[0].position.y = Wrap(ships[0].position.y, 0, WINDOW_HEIGHT);
+
+  for(u32 i = 0; i < MAX_BULLETS; i++) {
+    bullets[i].position.x += bullets[i].velocity.x * delta_time;
+    bullets[i].position.y += bullets[i].velocity.y * delta_time;
+
+    // if(is_out_of_bounds(bullets[i].position)) {
+      // reset_bullet(i);
+    // }
+  }
 
   /// Renderer /////////////////////////////////////////////////
   SDL_SetRenderDrawColor(renderer, 30, 30, 30, SDL_ALPHA_OPAQUE);
@@ -193,6 +243,20 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     center.x = texture_width  / 2.0f;
     center.y = texture_height / 2.0f;
     SDL_RenderTextureRotated(renderer, texture, NULL, &dst_rect, ships[i].rotation, &center, SDL_FLIP_NONE);
+  }
+
+  for(u32 i = 0; i < MAX_BULLETS; i++) {
+    f32 texture_width  = bullet_texture->w;
+    f32 texture_height = bullet_texture->h;
+    SDL_FRect dst_rect;
+    dst_rect.x = bullets[i].position.x;
+    dst_rect.y = bullets[i].position.y;
+    dst_rect.w = texture_width;
+    dst_rect.h = texture_height;
+    Vector2 center;
+    center.x = texture_width  / 2.0f;
+    center.y = texture_height / 2.0f;
+    SDL_RenderTextureRotated(renderer, bullet_texture, NULL, &dst_rect, bullets[i].rotation, &center, SDL_FLIP_NONE);
   }
 
   
