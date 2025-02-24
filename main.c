@@ -84,6 +84,15 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   return SDL_APP_CONTINUE;
 }
 
+typedef enum {
+  ACT_ROTATING_LEFT,
+  ACT_ROTATING_RIGHT,
+  ACT_NO_ROTATION,
+} ActionRotate;
+ActionRotate current_rotation_direction = ACT_NO_ROTATION;
+
+bool moving_forward = false;
+
 /* This function runs when a new event (mouse input, keypresses, etc) occurs. */
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
   if(event->type == SDL_EVENT_QUIT) {
@@ -96,20 +105,30 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
       return SDL_APP_SUCCESS;
     }
 
-    f32 dt = 0.013f;
     if(key_code == SDL_SCANCODE_A) {
-      ships[0].rotation -= rotation_speed * dt;
-    }
-
-    if(key_code == SDL_SCANCODE_D) {
-      ships[0].rotation += rotation_speed * dt;
+      current_rotation_direction = ACT_ROTATING_LEFT;
+    } else if(key_code == SDL_SCANCODE_D) {
+      current_rotation_direction = ACT_ROTATING_RIGHT;
+    } else {
+      current_rotation_direction = ACT_NO_ROTATION;
     }
 
     if(key_code == SDL_SCANCODE_W) {
-      f32 radians = ships[0].rotation * DEG2RAD;
-      Vector2 direction = {(f32)sin(radians), (f32)-cos(radians)};
-      ships[0].velocity.x += direction.x * ship_acceleration.x * dt;
-      ships[0].velocity.y += direction.y * ship_acceleration.y * dt;
+      moving_forward = true;
+    }
+  }
+
+  if(event->type == SDL_EVENT_KEY_UP) {
+    SDL_Scancode key_code = event->key.scancode;
+
+    if(key_code == SDL_SCANCODE_A) {
+      current_rotation_direction = ACT_NO_ROTATION;
+    } else if(key_code == SDL_SCANCODE_D) {
+      current_rotation_direction = ACT_NO_ROTATION;
+    }
+
+    if(key_code == SDL_SCANCODE_W) {
+      moving_forward = false;
     }
   }
 
@@ -132,6 +151,19 @@ Uint64 last_time = 0;
 SDL_AppResult SDL_AppIterate(void *appstate) {
   Uint64 now = SDL_GetTicks();
   float delta_time = ((float) (now - last_time)) / 1000.0f;
+
+  if(current_rotation_direction == ACT_ROTATING_LEFT) {
+    ships[0].rotation -= rotation_speed * delta_time;
+  } else if(current_rotation_direction == ACT_ROTATING_RIGHT) {
+    ships[0].rotation += rotation_speed * delta_time;
+  }
+
+  if(moving_forward) {
+    f32 radians = ships[0].rotation * DEG2RAD;
+    Vector2 direction = {(f32)sin(radians), (f32)-cos(radians)};
+    ships[0].velocity.x += direction.x * ship_acceleration.x * delta_time;
+    ships[0].velocity.y += direction.y * ship_acceleration.y * delta_time;
+  }
 
   ships[0].position.x += ships[0].velocity.x * delta_time;
   ships[0].position.y += ships[0].velocity.y * delta_time;
