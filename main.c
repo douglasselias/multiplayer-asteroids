@@ -174,6 +174,27 @@ bool circles_are_colliding(Vector2 center1, f32 radius1, Vector2 center2, f32 ra
   return collision;
 }
 
+//// Network
+
+#define WIN32_LEAN_AND_MEAN
+
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+// Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
+#pragma comment (lib, "Ws2_32.lib")
+#pragma comment (lib, "Mswsock.lib")
+#pragma comment (lib, "AdvApi32.lib")
+
+
+#define DEFAULT_BUFLEN 512
+#define DEFAULT_PORT "27015"
+
+SOCKET ConnectSocket = INVALID_SOCKET;
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   // SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, "120");
   SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
@@ -224,6 +245,69 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
 
   for(u32 i = 0; i < MAX_ASTEROIDS; i++) {
     spawn_meteor(&asteroids[i]);
+  }
+
+  ///// Network
+  WSADATA wsa_data;
+  s32 iResult = WSAStartup(MAKEWORD(2,2), &wsa_data);
+  if(iResult != 0) {
+    printf("WSAStartup failed with error: %d\n", iResult);
+    return 1;
+  }
+
+  struct addrinfo *result = NULL, *ptr = NULL, hints;
+
+  ZeroMemory(&hints, sizeof(hints));
+  hints.ai_family   = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_protocol = IPPROTO_TCP;
+
+  // Resolve the server address and port
+  iResult = getaddrinfo("localhost", DEFAULT_PORT, &hints, &result);
+  if(iResult != 0) {
+    printf("getaddrinfo failed with error: %d\n", iResult);
+    WSACleanup();
+    return 1;
+  }
+
+  // Attempt to connect to an address until one succeeds
+  for(ptr = result; ptr != NULL ; ptr = ptr->ai_next) {
+    // Create a SOCKET for connecting to server
+    ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
+    if(ConnectSocket == INVALID_SOCKET) {
+      printf("socket failed with error: %d\n", WSAGetLastError());
+      WSACleanup();
+      return 1;
+    }
+
+    // Connect to server.
+    iResult = connect(ConnectSocket, ptr->ai_addr, (int)ptr->ai_addrlen);
+    if(iResult == SOCKET_ERROR) {
+      closesocket(ConnectSocket);
+      ConnectSocket = INVALID_SOCKET;
+      continue;
+    }
+
+    break;
+  }
+
+  freeaddrinfo(result);
+
+  if(ConnectSocket == INVALID_SOCKET) {
+    printf("Unable to connect to server!\n");
+    WSACleanup();
+    // return 1;
+  }
+
+  /// Network
+  // Send an initial buffer
+  const char *sendbuf = "this is a test";
+  iResult = send(ConnectSocket, sendbuf, (s32)strlen(sendbuf), 0);
+  if(iResult == SOCKET_ERROR) {
+    printf("send failed with error: %d\n", WSAGetLastError());
+    closesocket(ConnectSocket);
+    WSACleanup();
+    return 1;
   }
 
   return SDL_APP_CONTINUE;
@@ -304,7 +388,14 @@ void draw_circle(Vector2 center, float radius, SDL_Color c) {
 Uint64 last_time = 0;
 SDL_AppResult SDL_AppIterate(void *appstate) {
   Uint64 now = SDL_GetTicks();
-  float delta_time = ((float) (now - last_time)) / 1000.0f;
+  f32 delta_time = ((f32) (now - last_time)) / 1000.0f;
+
+  char recvbuf[DEFAULT_BUFLEN];
+  s32 recvbuflen = DEFAULT_BUFLEN;
+  s32 iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
+  if(iResult > 0)       SDL_Log("Bytes received: %d\n", iResult);
+  else if(iResult == 0) SDL_Log("Connection closed\n");
+  else                  SDL_Log("recv failed with error: %d\n", WSAGetLastError());
 
   if(current_rotation_direction == ACT_ROTATING_LEFT) {
     ships[0].rotation -= rotation_speed * delta_time;
@@ -374,11 +465,6 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   SDL_SetRenderDrawColor(renderer, 30, 30, 30, SDL_ALPHA_OPAQUE);
   SDL_RenderClear(renderer);
 
-  // float x, y;
-  // SDL_GetMouseState(&x, &y);
-  // Vector2 screen_mouse  = {x, y};
-  // draw_circle(screen_mouse, 30, (SDL_Color){20, 100, 10});
-
   for(u8 i = 0; i < MAX_SHIPS; i++) {
     SDL_Texture *texture = ship_textures[i];
     f32 texture_width  = texture->w;
@@ -413,22 +499,9 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     dst_rect.y = asteroids[i].position.y;
     dst_rect.w = texture_width;
     dst_rect.h = texture_height;
-
     SDL_RenderTextureRotated(renderer, asteroid_texture, NULL, &dst_rect, 0, &asteroid_texture_center, SDL_FLIP_NONE);
   }
 
-  
-  // SDL_SetRenderScale(renderer, 4.0f, 4.0f);
-  // SDL_SetRenderDrawColor(renderer, 30, 230, 30, SDL_ALPHA_OPAQUE);
-  // f32 fps = 1.0f / delta_time; 
-  // SDL_RenderDebugTextFormat(renderer, 10, 10, "FPS: %.2f", fps);
-  // SDL_RenderDebugTextFormat(renderer, 10, 10, "IMG Version: %d", SDL_IMAGE_MAJOR_VERSION);
-  // SDL_SetRenderScale(renderer, 1.0f, 1.0f);
-
-  SDL_SetRenderDrawColor(renderer, 200, 20, 20, SDL_ALPHA_OPAQUE);
-  SDL_RenderLine(renderer, 0, HALF_WINDOW_HEIGHT, WINDOW_WIDTH, HALF_WINDOW_HEIGHT);
-  SDL_RenderLine(renderer, HALF_WINDOW_WIDTH, 0, HALF_WINDOW_WIDTH, WINDOW_HEIGHT);
-  
   SDL_RenderPresent(renderer);
 
   last_time = now;
