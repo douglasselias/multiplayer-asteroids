@@ -393,7 +393,7 @@ f32 Lerp(f32 start, f32 end, f32 amount) {
 
 u64 last_time = 0;
 u64 frame_counter = 1;
-u64 sync_frame = 25;
+u64 sync_frame = 5;
 
 SDL_AppResult SDL_AppIterate(void *appstate) {
   u64 now = SDL_GetTicks();
@@ -406,6 +406,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
       u8 remote_player_id = received_position_buffer[0];
       memcpy(&(ships[remote_player_id].position.x), received_position_buffer + 1, sizeof(f32));
       memcpy(&(ships[remote_player_id].position.y), received_position_buffer + 5, sizeof(f32));
+      memcpy(&(ships[remote_player_id].rotation),   received_position_buffer + 9, sizeof(f32));
       // SDL_Log("Receive data: %.2f, %.2f\n", ships[remote_player_id].position.x, ships[remote_player_id].position.y);
     }
   } else {
@@ -414,6 +415,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
       u8 remote_player_id = i;
       last_ships[remote_player_id].position.x = Lerp(last_ships[remote_player_id].position.x, ships[remote_player_id].position.x, 0.1f);
       last_ships[remote_player_id].position.y = Lerp(last_ships[remote_player_id].position.y, ships[remote_player_id].position.y, 0.1f);
+      last_ships[remote_player_id].rotation   = Lerp(last_ships[remote_player_id].rotation,   ships[remote_player_id].rotation,   0.1f);
       // SDL_Log("SHIPS: %.2f, %.2f\n", ships[remote_player_id].position.x, ships[remote_player_id].position.y);
       // SDL_Log("LASTS: %.2f, %.2f\n", last_ships[remote_player_id].position.x, last_ships[remote_player_id].position.y);
     }
@@ -484,11 +486,12 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   }
 
   if((frame_counter % sync_frame) == 0) {
-    char position_buffer[MESSAGE_BUFFER_SIZE] = {0};
-    position_buffer[0] = player_id;
-    memcpy(position_buffer + 1, &(ships[player_id].position.x), sizeof(f32));
-    memcpy(position_buffer + 5, &(ships[player_id].position.y), sizeof(f32));
-    s32 send_result = send(ConnectSocket, position_buffer, MESSAGE_BUFFER_SIZE, 0);
+    char player_state_buffer[MESSAGE_BUFFER_SIZE] = {0};
+    player_state_buffer[0] = player_id;
+    memcpy(player_state_buffer + 1, &(ships[player_id].position.x), sizeof(f32));
+    memcpy(player_state_buffer + 5, &(ships[player_id].position.y), sizeof(f32));
+    memcpy(player_state_buffer + 9, &(ships[player_id].rotation),   sizeof(f32));
+    s32 send_result = send(ConnectSocket, player_state_buffer, MESSAGE_BUFFER_SIZE, 0);
   }
 
   frame_counter++;
@@ -524,13 +527,15 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     f32 texture_width  = texture->w;
     f32 texture_height = texture->h;
     SDL_FRect dst_rect;
-    f32 x, y;
+    f32 x, y, rotation;
     if(i == player_id) {
       x = ships[i].position.x;
       y = ships[i].position.y;
+      rotation = ships[i].rotation;
     } else {
       x = last_ships[i].position.x;
       y = last_ships[i].position.y;
+      rotation = last_ships[i].rotation;
       // SDL_Log("Receive data Render: %.2f, %.2f\n", x, y);
     }
     dst_rect.x = x;
@@ -540,7 +545,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     Vector2 center;
     center.x = texture_width  / 2.0f;
     center.y = texture_height / 2.0f;
-    SDL_RenderTextureRotated(renderer, texture, NULL, &dst_rect, ships[i].rotation, &center, SDL_FLIP_NONE);
+    SDL_RenderTextureRotated(renderer, texture, NULL, &dst_rect, rotation, &center, SDL_FLIP_NONE);
   }
 
   SDL_RenderPresent(renderer);
