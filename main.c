@@ -439,7 +439,7 @@ f32 Lerp(f32 start, f32 end, f32 amount) {
 
 Uint64 last_time = 0;
 u64 frame_counter = 1;
-u64 sync_frame = 2;
+u64 sync_frame = 25;
 
 SDL_AppResult SDL_AppIterate(void *appstate) {
   Uint64 now = SDL_GetTicks();
@@ -545,6 +545,28 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   SDL_SetRenderDrawColor(renderer, 30, 30, 30, SDL_ALPHA_OPAQUE);
   SDL_RenderClear(renderer);
 
+  for(u32 i = 0; i < MAX_BULLETS; i++) {
+    f32 texture_width  = bullet_texture->w;
+    f32 texture_height = bullet_texture->h;
+    SDL_FRect dst_rect;
+    dst_rect.x = bullets[i].position.x;
+    dst_rect.y = bullets[i].position.y;
+    dst_rect.w = texture_width;
+    dst_rect.h = texture_height;
+    SDL_RenderTextureRotated(renderer, bullet_texture, NULL, &dst_rect, bullets[i].rotation, &bullet_texture_center, SDL_FLIP_NONE);
+  }
+
+  for(u32 i = 0; i < MAX_ASTEROIDS; i++) {
+    f32 texture_width  = asteroid_texture->w;
+    f32 texture_height = asteroid_texture->h;
+    SDL_FRect dst_rect;
+    dst_rect.x = asteroids[i].position.x;
+    dst_rect.y = asteroids[i].position.y;
+    dst_rect.w = texture_width;
+    dst_rect.h = texture_height;
+    SDL_RenderTextureRotated(renderer, asteroid_texture, NULL, &dst_rect, 0, &asteroid_texture_center, SDL_FLIP_NONE);
+  }
+
   for(u8 i = 0; i < MAX_SHIPS; i++) {
     SDL_Texture *texture = ship_textures[i];
     f32 texture_width  = texture->w;
@@ -567,28 +589,6 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     center.x = texture_width  / 2.0f;
     center.y = texture_height / 2.0f;
     SDL_RenderTextureRotated(renderer, texture, NULL, &dst_rect, ships[i].rotation, &center, SDL_FLIP_NONE);
-  }
-
-  for(u32 i = 0; i < MAX_BULLETS; i++) {
-    f32 texture_width  = bullet_texture->w;
-    f32 texture_height = bullet_texture->h;
-    SDL_FRect dst_rect;
-    dst_rect.x = bullets[i].position.x;
-    dst_rect.y = bullets[i].position.y;
-    dst_rect.w = texture_width;
-    dst_rect.h = texture_height;
-    SDL_RenderTextureRotated(renderer, bullet_texture, NULL, &dst_rect, bullets[i].rotation, &bullet_texture_center, SDL_FLIP_NONE);
-  }
-
-  for(u32 i = 0; i < MAX_ASTEROIDS; i++) {
-    f32 texture_width  = asteroid_texture->w;
-    f32 texture_height = asteroid_texture->h;
-    SDL_FRect dst_rect;
-    dst_rect.x = asteroids[i].position.x;
-    dst_rect.y = asteroids[i].position.y;
-    dst_rect.w = texture_width;
-    dst_rect.h = texture_height;
-    SDL_RenderTextureRotated(renderer, asteroid_texture, NULL, &dst_rect, 0, &asteroid_texture_center, SDL_FLIP_NONE);
   }
 
   SDL_RenderPresent(renderer);
