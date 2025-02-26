@@ -3,6 +3,8 @@
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_image.h>
 
+#include "src/ship.c"
+
 typedef SDL_FPoint Vector2;
 typedef Uint64 u64;
 typedef Uint32 u32;
@@ -27,12 +29,11 @@ f32 Wrap(f32 value, f32 min, f32 max) {
 static SDL_Window *window     = NULL;
 static SDL_Renderer *renderer = NULL;
  
-#define WINDOW_WIDTH  1280
-#define WINDOW_HEIGHT 720
+#define WINDOW_WIDTH  640
+#define WINDOW_HEIGHT 480
 #define HALF_WINDOW_WIDTH  (WINDOW_WIDTH  / 2)
 #define HALF_WINDOW_HEIGHT (WINDOW_HEIGHT / 2)
 
-#define MAX_SHIPS 4
 SDL_Texture* ship_textures[MAX_SHIPS] = {0};
 
 Vector2 ship_acceleration = {300, 300};
@@ -46,6 +47,7 @@ typedef struct {
 } Ship;
 
 Ship ships[MAX_SHIPS] = {0};
+Ship last_ships[MAX_SHIPS] = {0};
 
 typedef struct {
   Vector2 position;
@@ -195,6 +197,42 @@ bool circles_are_colliding(Vector2 center1, f32 radius1, Vector2 center2, f32 ra
 
 SOCKET ConnectSocket = INVALID_SOCKET;
 
+u8 player_id = 0;
+
+Vector2 decode_position(char encoded_position_buffer[9]) {
+  Vector2 position = {0};
+  s32 x = encoded_position_buffer[1];
+  s32 y = encoded_position_buffer[5];
+
+  for(u8 i = 2; i < 5; i++) {
+    x = x << 8;
+    x |= encoded_position_buffer[i];
+
+    y = y << 8;
+    y |= encoded_position_buffer[i+4];
+  }
+
+  position.x = x / 100;
+  position.y = y / 100;
+
+  return position;
+}
+
+void encode_position(char raw_position_buffer[9], Vector2 position) {
+  s32 x = position.x * 100;
+  s32 y = position.y * 100;
+
+  raw_position_buffer[1] = x >> 24;
+  raw_position_buffer[2] = x >> 16;
+  raw_position_buffer[3] = x >> 8;
+  raw_position_buffer[4] = x >> 0;
+
+  raw_position_buffer[5] = y >> 24;
+  raw_position_buffer[6] = y >> 16;
+  raw_position_buffer[7] = y >> 8;
+  raw_position_buffer[8] = y >> 0;
+}
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   // SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, "120");
   SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
@@ -227,8 +265,15 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     if(i == 2) { x *= 1.75; y *= 1.75; }
     if(i == 3) { x *= 0.25; y *= 1.75; }
 
+    if(i == 0) {
+      // SDL_Log("Position: %.2f, %.2f\n", x, y);
+    }
+
     ships[i].position.x = x;
     ships[i].position.y = y;
+
+    last_ships[i].position.x = x;
+    last_ships[i].position.y = y;
   }
 
   bullet_texture = IMG_LoadTexture(renderer, "../assets/bullet.png");
@@ -251,7 +296,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   WSADATA wsa_data;
   s32 iResult = WSAStartup(MAKEWORD(2,2), &wsa_data);
   if(iResult != 0) {
-    printf("WSAStartup failed with error: %d\n", iResult);
+    SDL_Log("WSAStartup failed with error: %d\n", iResult);
     return 1;
   }
 
@@ -265,7 +310,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   // Resolve the server address and port
   iResult = getaddrinfo("localhost", DEFAULT_PORT, &hints, &result);
   if(iResult != 0) {
-    printf("getaddrinfo failed with error: %d\n", iResult);
+    SDL_Log("getaddrinfo failed with error: %d\n", iResult);
     WSACleanup();
     return 1;
   }
@@ -275,7 +320,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     // Create a SOCKET for connecting to server
     ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
     if(ConnectSocket == INVALID_SOCKET) {
-      printf("socket failed with error: %d\n", WSAGetLastError());
+      SDL_Log("socket failed with error: %d\n", WSAGetLastError());
       WSACleanup();
       return 1;
     }
@@ -294,20 +339,22 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   freeaddrinfo(result);
 
   if(ConnectSocket == INVALID_SOCKET) {
-    printf("Unable to connect to server!\n");
-    WSACleanup();
-    // return 1;
-  }
-
-  /// Network
-  // Send an initial buffer
-  const char *sendbuf = "this is a test";
-  iResult = send(ConnectSocket, sendbuf, (s32)strlen(sendbuf), 0);
-  if(iResult == SOCKET_ERROR) {
-    printf("send failed with error: %d\n", WSAGetLastError());
-    closesocket(ConnectSocket);
+    SDL_Log("Unable to connect to server!\n");
     WSACleanup();
     return 1;
+  }
+
+  char* buffer;
+  buffer = calloc(sizeof(char), 1);
+  iResult = recv(ConnectSocket, buffer, 1, 0);
+  if(iResult > 0) {
+    SDL_Log("ID: %d", *(u8*)buffer);
+    player_id = *(u8*)buffer;
+  }
+
+  DWORD non_blocking = 1;
+  if(ioctlsocket(ConnectSocket, FIONBIO, &non_blocking) != 0) {
+    SDL_Log("failed to set non-blocking\n");
   }
 
   return SDL_APP_CONTINUE;
@@ -385,35 +432,58 @@ void draw_circle(Vector2 center, float radius, SDL_Color c) {
   }
 }
 
+f32 Lerp(f32 start, f32 end, f32 amount) {
+  f32 result = start + amount*(end - start);
+  return result;
+}
+
 Uint64 last_time = 0;
+u64 frame_counter = 1;
+u64 sync_frame = 2;
+
 SDL_AppResult SDL_AppIterate(void *appstate) {
   Uint64 now = SDL_GetTicks();
   f32 delta_time = ((f32) (now - last_time)) / 1000.0f;
 
-  char recvbuf[DEFAULT_BUFLEN];
-  s32 recvbuflen = DEFAULT_BUFLEN;
-  s32 iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
-  if(iResult > 0)       SDL_Log("Bytes received: %d\n", iResult);
-  else if(iResult == 0) SDL_Log("Connection closed\n");
-  else                  SDL_Log("recv failed with error: %d\n", WSAGetLastError());
+  // SDL_Log("Runnign: value %d\n", (frame_counter % (sync_frame*2)) == 0);
+  // SDL_Log("Runnign: value %d\n", frame_counter);
+  if((frame_counter % (sync_frame)) == 0) {
+    char received_position_buffer[9];
+    s32 iResult = recv(ConnectSocket, received_position_buffer, 9, 0);
+    if(iResult > 0) {
+      u8 remote_player_id = received_position_buffer[0];
+      memcpy(&(ships[remote_player_id].position.x), received_position_buffer + 1, sizeof(f32));
+      memcpy(&(ships[remote_player_id].position.y), received_position_buffer + 5, sizeof(f32));
+      // SDL_Log("Receive data: %.2f, %.2f\n", ships[remote_player_id].position.x, ships[remote_player_id].position.y);
+    }
+  } else {
+    for(u8 i = 0; i < MAX_SHIPS; i++) {
+      if(i == player_id) continue;
+      u8 remote_player_id = i;
+      last_ships[remote_player_id].position.x = Lerp(last_ships[remote_player_id].position.x, ships[remote_player_id].position.x, 0.1f);
+      last_ships[remote_player_id].position.y = Lerp(last_ships[remote_player_id].position.y, ships[remote_player_id].position.y, 0.1f);
+      // SDL_Log("SHIPS: %.2f, %.2f\n", ships[remote_player_id].position.x, ships[remote_player_id].position.y);
+      // SDL_Log("LASTS: %.2f, %.2f\n", last_ships[remote_player_id].position.x, last_ships[remote_player_id].position.y);
+    }
+  }
 
   if(current_rotation_direction == ACT_ROTATING_LEFT) {
-    ships[0].rotation -= rotation_speed * delta_time;
+    ships[player_id].rotation -= rotation_speed * delta_time;
   } else if(current_rotation_direction == ACT_ROTATING_RIGHT) {
-    ships[0].rotation += rotation_speed * delta_time;
+    ships[player_id].rotation += rotation_speed * delta_time;
   }
 
   if(moving_forward) {
-    f32 radians = ships[0].rotation * DEG2RAD;
+    f32 radians = ships[player_id].rotation * DEG2RAD;
     Vector2 direction = {(f32)sin(radians), (f32)-cos(radians)};
-    ships[0].velocity.x += direction.x * ship_acceleration.x * delta_time;
-    ships[0].velocity.y += direction.y * ship_acceleration.y * delta_time;
+    ships[player_id].velocity.x += direction.x * ship_acceleration.x * delta_time;
+    ships[player_id].velocity.y += direction.y * ship_acceleration.y * delta_time;
   }
 
   if(firing) {
     firing = false;
-    f32 rotation = ships[0].rotation;
-    Vector2 position = ships[0].position;
+    f32 rotation = ships[player_id].rotation;
+    Vector2 position = ships[player_id].position;
 
     f32 radians = rotation * DEG2RAD;
     Vector2 direction = {(f32)sin(radians), (f32)-cos(radians)};
@@ -423,10 +493,10 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     bullet_index = bullet_index < MAX_BULLETS - 1 ? bullet_index + 1 : 0;
   }
 
-  ships[0].position.x += ships[0].velocity.x * delta_time;
-  ships[0].position.y += ships[0].velocity.y * delta_time;
-  ships[0].position.x = Wrap(ships[0].position.x, 0, WINDOW_WIDTH);
-  ships[0].position.y = Wrap(ships[0].position.y, 0, WINDOW_HEIGHT);
+  ships[player_id].position.x += ships[player_id].velocity.x * delta_time;
+  ships[player_id].position.y += ships[player_id].velocity.y * delta_time;
+  ships[player_id].position.x = Wrap(ships[player_id].position.x, 0, WINDOW_WIDTH);
+  ships[player_id].position.y = Wrap(ships[player_id].position.y, 0, WINDOW_HEIGHT);
 
   for(u32 i = 0; i < MAX_BULLETS; i++) {
     bullets[i].position.x += bullets[i].velocity.x * delta_time;
@@ -461,6 +531,16 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     }
   }
 
+  if((frame_counter % sync_frame) == 0) {
+    char position_buffer[9] = {0};
+    position_buffer[0] = player_id;
+    memcpy(position_buffer + 1, &(ships[player_id].position.x), sizeof(f32));
+    memcpy(position_buffer + 5, &(ships[player_id].position.y), sizeof(f32));
+    s32 send_result = send(ConnectSocket, position_buffer, 9, 0);
+  }
+
+  frame_counter++;
+
   /// Renderer /////////////////////////////////////////////////
   SDL_SetRenderDrawColor(renderer, 30, 30, 30, SDL_ALPHA_OPAQUE);
   SDL_RenderClear(renderer);
@@ -470,8 +550,17 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     f32 texture_width  = texture->w;
     f32 texture_height = texture->h;
     SDL_FRect dst_rect;
-    dst_rect.x = ships[i].position.x;
-    dst_rect.y = ships[i].position.y;
+    f32 x, y;
+    if(i == player_id) {
+      x = ships[i].position.x;
+      y = ships[i].position.y;
+    } else {
+      x = last_ships[i].position.x;
+      y = last_ships[i].position.y;
+      // SDL_Log("Receive data Render: %.2f, %.2f\n", x, y);
+    }
+    dst_rect.x = x;
+    dst_rect.y = y;
     dst_rect.w = texture_width;
     dst_rect.h = texture_height;
     Vector2 center;
