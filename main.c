@@ -4,6 +4,7 @@
 #include <SDL3/SDL_image.h>
 
 #include "src/ship.c"
+#include "src/socket.c"
 
 typedef SDL_FPoint Vector2;
 typedef Uint64 u64;
@@ -186,52 +187,13 @@ bool circles_are_colliding(Vector2 center1, f32 radius1, Vector2 center2, f32 ra
 #include <stdlib.h>
 #include <stdio.h>
 
-// Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
 #pragma comment (lib, "Ws2_32.lib")
 #pragma comment (lib, "Mswsock.lib")
 #pragma comment (lib, "AdvApi32.lib")
 
-
-#define DEFAULT_BUFLEN 512
-#define DEFAULT_PORT "27015"
-
 SOCKET ConnectSocket = INVALID_SOCKET;
 
 u8 player_id = 0;
-
-Vector2 decode_position(char encoded_position_buffer[9]) {
-  Vector2 position = {0};
-  s32 x = encoded_position_buffer[1];
-  s32 y = encoded_position_buffer[5];
-
-  for(u8 i = 2; i < 5; i++) {
-    x = x << 8;
-    x |= encoded_position_buffer[i];
-
-    y = y << 8;
-    y |= encoded_position_buffer[i+4];
-  }
-
-  position.x = x / 100;
-  position.y = y / 100;
-
-  return position;
-}
-
-void encode_position(char raw_position_buffer[9], Vector2 position) {
-  s32 x = position.x * 100;
-  s32 y = position.y * 100;
-
-  raw_position_buffer[1] = x >> 24;
-  raw_position_buffer[2] = x >> 16;
-  raw_position_buffer[3] = x >> 8;
-  raw_position_buffer[4] = x >> 0;
-
-  raw_position_buffer[5] = y >> 24;
-  raw_position_buffer[6] = y >> 16;
-  raw_position_buffer[7] = y >> 8;
-  raw_position_buffer[8] = y >> 0;
-}
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   // SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, "120");
@@ -265,10 +227,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     if(i == 2) { x *= 1.75; y *= 1.75; }
     if(i == 3) { x *= 0.25; y *= 1.75; }
 
-    if(i == 0) {
-      // SDL_Log("Position: %.2f, %.2f\n", x, y);
-    }
-
     ships[i].position.x = x;
     ships[i].position.y = y;
 
@@ -292,7 +250,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     spawn_meteor(&asteroids[i]);
   }
 
-  ///// Network
+  ///// Network ////////////////////////////////////
   WSADATA wsa_data;
   s32 iResult = WSAStartup(MAKEWORD(2,2), &wsa_data);
   if(iResult != 0) {
@@ -307,7 +265,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_protocol = IPPROTO_TCP;
 
-  // Resolve the server address and port
   iResult = getaddrinfo("localhost", DEFAULT_PORT, &hints, &result);
   if(iResult != 0) {
     SDL_Log("getaddrinfo failed with error: %d\n", iResult);
@@ -317,7 +274,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
 
   // Attempt to connect to an address until one succeeds
   for(ptr = result; ptr != NULL ; ptr = ptr->ai_next) {
-    // Create a SOCKET for connecting to server
     ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
     if(ConnectSocket == INVALID_SOCKET) {
       SDL_Log("socket failed with error: %d\n", WSAGetLastError());
@@ -325,7 +281,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
       return 1;
     }
 
-    // Connect to server.
     iResult = connect(ConnectSocket, ptr->ai_addr, (int)ptr->ai_addrlen);
     if(iResult == SOCKET_ERROR) {
       closesocket(ConnectSocket);
@@ -344,12 +299,11 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     return 1;
   }
 
-  char* buffer;
-  buffer = calloc(sizeof(char), 1);
-  iResult = recv(ConnectSocket, buffer, 1, 0);
+  char player_id_buffer[1];
+  iResult = recv(ConnectSocket, player_id_buffer, 1, 0);
   if(iResult > 0) {
-    SDL_Log("ID: %d", *(u8*)buffer);
-    player_id = *(u8*)buffer;
+    player_id = player_id_buffer[0];
+    SDL_Log("Player ID: %d", player_id);
   }
 
   DWORD non_blocking = 1;
@@ -437,19 +391,17 @@ f32 Lerp(f32 start, f32 end, f32 amount) {
   return result;
 }
 
-Uint64 last_time = 0;
+u64 last_time = 0;
 u64 frame_counter = 1;
 u64 sync_frame = 25;
 
 SDL_AppResult SDL_AppIterate(void *appstate) {
-  Uint64 now = SDL_GetTicks();
+  u64 now = SDL_GetTicks();
   f32 delta_time = ((f32) (now - last_time)) / 1000.0f;
 
-  // SDL_Log("Runnign: value %d\n", (frame_counter % (sync_frame*2)) == 0);
-  // SDL_Log("Runnign: value %d\n", frame_counter);
   if((frame_counter % (sync_frame)) == 0) {
-    char received_position_buffer[9];
-    s32 iResult = recv(ConnectSocket, received_position_buffer, 9, 0);
+    char received_position_buffer[MESSAGE_BUFFER_SIZE];
+    s32 iResult = recv(ConnectSocket, received_position_buffer, MESSAGE_BUFFER_SIZE, 0);
     if(iResult > 0) {
       u8 remote_player_id = received_position_buffer[0];
       memcpy(&(ships[remote_player_id].position.x), received_position_buffer + 1, sizeof(f32));
@@ -532,11 +484,11 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   }
 
   if((frame_counter % sync_frame) == 0) {
-    char position_buffer[9] = {0};
+    char position_buffer[MESSAGE_BUFFER_SIZE] = {0};
     position_buffer[0] = player_id;
     memcpy(position_buffer + 1, &(ships[player_id].position.x), sizeof(f32));
     memcpy(position_buffer + 5, &(ships[player_id].position.y), sizeof(f32));
-    s32 send_result = send(ConnectSocket, position_buffer, 9, 0);
+    s32 send_result = send(ConnectSocket, position_buffer, MESSAGE_BUFFER_SIZE, 0);
   }
 
   frame_counter++;

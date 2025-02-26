@@ -1,0 +1,3 @@
+#define MESSAGE_BUFFER_SIZE 9
+#define DEFAULT_PORT "27015"
+

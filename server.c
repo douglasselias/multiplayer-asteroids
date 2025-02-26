@@ -21,34 +21,26 @@ typedef float  f32;
 typedef double f64;
 
 #include "src/ship.c"
+#include "src/socket.c"
 
-// Need to link with Ws2_32.lib
 #pragma comment (lib, "Ws2_32.lib")
-// #pragma comment (lib, "Mswsock.lib")
 
-#define DEFAULT_BUFLEN 512
-#define DEFAULT_PORT "27015"
-
-int __cdecl main()  {
+int main()  {
   WSADATA wsaData;
-  int iResult;
 
   SOCKET ListenSocket = INVALID_SOCKET;
 
   SOCKET ClientSocket[MAX_SHIPS] = {0};
   u8 socket_connection_index = 0;
 
-  for(int i = 0; i < MAX_SHIPS; i++) {
+  for(u8 i = 0; i < MAX_SHIPS; i++) {
     ClientSocket[i] = INVALID_SOCKET;
   }
 
   struct addrinfo *result = NULL;
   struct addrinfo hints;
 
-  int iSendResult;
-  
-  // Initialize Winsock
-  iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
+  s32 iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
   if (iResult != 0) {
     printf("WSAStartup failed with error: %d\n", iResult);
     return 1;
@@ -60,7 +52,6 @@ int __cdecl main()  {
   hints.ai_protocol = IPPROTO_TCP;
   hints.ai_flags = AI_PASSIVE;
 
-  // Resolve the server address and port
   iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
   if(iResult != 0) {
     printf("getaddrinfo failed with error: %d\n", iResult);
@@ -68,7 +59,6 @@ int __cdecl main()  {
     return 1;
   }
 
-  // Create a SOCKET for the server to listen for client connections.
   ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
   if(ListenSocket == INVALID_SOCKET) {
     printf("socket failed with error: %d\n", WSAGetLastError());
@@ -77,7 +67,6 @@ int __cdecl main()  {
     return 1;
   }
 
-  // Setup the TCP listening socket
   iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
   if(iResult == SOCKET_ERROR) {
     printf("bind failed with error: %d\n", WSAGetLastError());
@@ -103,14 +92,10 @@ int __cdecl main()  {
       if(ClientSocket[socket_connection_index] == INVALID_SOCKET) {
         printf("accept failed with error: %d\n", WSAGetLastError());
       } else {
-        // printf("Conn Index %d\n", socket_connection_index);
-        char* buffer = calloc(sizeof(char), 1);
-        *buffer = socket_connection_index;
-        int first_send_result = send(ClientSocket[socket_connection_index], buffer, 1, 0);
-        if(first_send_result == SOCKET_ERROR) {
-          printf("send failed with error: %d\n", WSAGetLastError());
-          // return 1;
-        } else {
+        char id[1];
+        id[0] = socket_connection_index;
+        s32 _result = send(ClientSocket[socket_connection_index], id, 1, 0);
+        if(_result != SOCKET_ERROR) {
           socket_connection_index++;
           if(socket_connection_index == MAX_SHIPS) {
             DWORD non_blocking = 1;
@@ -125,14 +110,13 @@ int __cdecl main()  {
     }
 
     for(u8 i = 0; i < MAX_SHIPS; i++) {
-      #define RECEIVE_BUFFER_SIZE 9
-      char receive_buffer[RECEIVE_BUFFER_SIZE];
-      iResult = recv(ClientSocket[i], receive_buffer, RECEIVE_BUFFER_SIZE, 0);
+      char receive_buffer[MESSAGE_BUFFER_SIZE];
+      iResult = recv(ClientSocket[i], receive_buffer, MESSAGE_BUFFER_SIZE, 0);
       if(iResult > 0) {
         for(u8 j = 0; j < MAX_SHIPS; j++) {
           u8 player_id_sender = receive_buffer[0];
           if(player_id_sender != j) {
-            iSendResult = send(ClientSocket[j], receive_buffer, RECEIVE_BUFFER_SIZE, 0);
+            s32 iSendResult = send(ClientSocket[j], receive_buffer, MESSAGE_BUFFER_SIZE, 0);
             if(iSendResult == SOCKET_ERROR) {
               printf("send failed with error: %d\n", WSAGetLastError());
               return 1;
