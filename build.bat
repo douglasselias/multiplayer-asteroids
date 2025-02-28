@@ -12,7 +12,7 @@ rmdir /S /Q .\build
 mkdir build
 pushd .\build
 
-start cmd /k Call ../build_server.bat 4444
+start cmd /k Call ../build_server.bat
 
 set annoying_warnings=/wd4189 /wd4996 /wd4100 /wd4244 /wd4255 /wd5045 /wd4711 /wd4710 /wd4820 /wd4514 /wd4101
 
@@ -22,12 +22,10 @@ if %ERRORLEVEL% equ 0 (
   xcopy /Y ..\vendor\SDL3.dll .
   xcopy /Y ..\vendor\SDL3_image.dll .
 
-  @REM main
-
-  start cmd /k Call main.exe 5555
-  start cmd /k Call main.exe 6666
-  @REM start cmd /k Call main.exe 7777
-  @REM start cmd /k Call main.exe 8888
+  start cmd /k Call main 0
+  start cmd /k Call main 1
+  @REM start cmd /k Call main 2
+  @REM start cmd /k Call main 3
 )
 
 popd

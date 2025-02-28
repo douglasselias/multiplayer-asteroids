@@ -7,131 +7,71 @@
 #include <ws2tcpip.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdint.h>
 
-typedef uint64_t u64;
-typedef uint32_t u32;
-typedef uint16_t u16;
-typedef uint8_t  u8;
-typedef int64_t s64;
-typedef int32_t s32;
-typedef int16_t s16;
-typedef int8_t  s8;
-typedef float  f32;
-typedef double f64;
+typedef struct addrinfo addrinfo;
 
+#include "src/types.c"
 #include "src/ship.c"
 #include "src/socket.c"
 
 #pragma comment (lib, "Ws2_32.lib")
 
-int main()  {
-  WSADATA wsaData;
-
-  SOCKET ListenSocket = INVALID_SOCKET;
-
-  SOCKET ClientSocket[MAX_SHIPS] = {0};
-  u8 socket_connection_index = 0;
-
-  for(u8 i = 0; i < MAX_SHIPS; i++) {
-    ClientSocket[i] = INVALID_SOCKET;
-  }
-
-  struct addrinfo *result = NULL;
-  struct addrinfo hints;
-
-  s32 iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
-  if (iResult != 0) {
-    printf("WSAStartup failed with error: %d\n", iResult);
-    return 1;
-  }
-
-  ZeroMemory(&hints, sizeof(hints));
-  hints.ai_family = AF_INET;
+s32 main()  {
+  WSADATA wsa_data;
+  WSAStartup(MAKEWORD(2,2), &wsa_data);
+  
+  addrinfo hints = {0};
+  hints.ai_family   = AF_INET;
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_protocol = IPPROTO_TCP;
-  hints.ai_flags = AI_PASSIVE;
+  hints.ai_flags    = AI_PASSIVE;
+  
+  addrinfo *address_info = NULL;
+  getaddrinfo(NULL, DEFAULT_PORT, &hints, &address_info);
 
-  iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
-  if(iResult != 0) {
-    printf("getaddrinfo failed with error: %d\n", iResult);
-    WSACleanup();
-    return 1;
-  }
+  SOCKET server_socket = socket(address_info->ai_family, address_info->ai_socktype, address_info->ai_protocol);
 
-  ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-  if(ListenSocket == INVALID_SOCKET) {
-    printf("socket failed with error: %d\n", WSAGetLastError());
-    freeaddrinfo(result);
-    WSACleanup();
-    return 1;
-  }
+  bind(server_socket, address_info->ai_addr, (s32)address_info->ai_addrlen);
 
-  iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
-  if(iResult == SOCKET_ERROR) {
-    printf("bind failed with error: %d\n", WSAGetLastError());
-    freeaddrinfo(result);
-    closesocket(ListenSocket);
-    WSACleanup();
-    return 1;
-  }
+  freeaddrinfo(address_info);
 
-  freeaddrinfo(result);
+  listen(server_socket, SOMAXCONN);
 
-  iResult = listen(ListenSocket, SOMAXCONN);
-  if(iResult == SOCKET_ERROR) {
-    printf("listen failed with error: %d\n", WSAGetLastError());
-    closesocket(ListenSocket);
-    WSACleanup();
-    return 1;
-  }
+  SOCKET client_sockets[MAX_SHIPS] = {0};
+  u8 client_index = 0;
 
-  do {
-    while(socket_connection_index < MAX_SHIPS) {
-      ClientSocket[socket_connection_index] = accept(ListenSocket, NULL, NULL);
-      if(ClientSocket[socket_connection_index] == INVALID_SOCKET) {
-        printf("accept failed with error: %d\n", WSAGetLastError());
-      } else {
-        char id[1];
-        id[0] = socket_connection_index;
-        s32 _result = send(ClientSocket[socket_connection_index], id, 1, 0);
-        if(_result != SOCKET_ERROR) {
-          socket_connection_index++;
-          if(socket_connection_index == MAX_SHIPS) {
-            DWORD non_blocking = 1;
-            if(ioctlsocket(ListenSocket, FIONBIO, &non_blocking) != 0) {
-              printf("failed to set non-blocking on server\n");
-            } else {
-              printf("Non blocking on the server enabled\n");
-            }
-          }
-        }
-      }
+  while(client_index < MAX_SHIPS) {
+    client_sockets[client_index] = accept(server_socket, NULL, NULL);
+
+    if(client_sockets[client_index] != INVALID_SOCKET) {
+      #define ID_BUFFER_SIZE 1
+      char id_buffer[ID_BUFFER_SIZE] = {client_index};
+      send(client_sockets[client_index], id_buffer, ID_BUFFER_SIZE, 0);
+      client_index++;
     }
+  }
 
+  DWORD non_blocking = 1;
+  ioctlsocket(server_socket, FIONBIO, &non_blocking);
+
+  while(true) {
     for(u8 i = 0; i < MAX_SHIPS; i++) {
       char receive_buffer[MESSAGE_BUFFER_SIZE];
-      iResult = recv(ClientSocket[i], receive_buffer, MESSAGE_BUFFER_SIZE, 0);
-      if(iResult > 0) {
-        for(u8 j = 0; j < MAX_SHIPS; j++) {
-          u8 player_id_sender = receive_buffer[0];
-          if(player_id_sender != j) {
-            s32 iSendResult = send(ClientSocket[j], receive_buffer, MESSAGE_BUFFER_SIZE, 0);
-            if(iSendResult == SOCKET_ERROR) {
-              printf("send failed with error: %d\n", WSAGetLastError());
-              return 1;
-            }
-          }
+      s32 recv_result = recv(client_sockets[i], receive_buffer, MESSAGE_BUFFER_SIZE, 0);
+      if(recv_result <= 0) continue;
+
+      for(u8 j = 0; j < MAX_SHIPS; j++) {
+        u8 player_id_sender = receive_buffer[0];
+        if(player_id_sender == j) continue;
+
+        s32 send_result = send(client_sockets[j], receive_buffer, MESSAGE_BUFFER_SIZE, 0);
+        if(send_result == SOCKET_ERROR) {
+          printf("send failed with error: %d\n", WSAGetLastError());
+          return 1;
         }
       }
-      else if(iResult == 0) {
-        printf("Connection closing...\n");
-      }
-      else {
-        printf("recv failed with error: %d\n", WSAGetLastError());
-      }
     }
-  } while(iResult > 0);
+  }
 
   return 0;
 }
